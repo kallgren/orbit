@@ -3,13 +3,15 @@
 (defn parse-month-day [date-str year]
   (js/Date. (str date-str " " year)))
 
-(defn days-until [date-str]
-  (when date-str
-    (let [now    (js/Date.)
-          year   (.getFullYear now)
-          target (parse-month-day date-str year)
-          target (if (< target now) (doto target (.setFullYear (inc year))) target)
-          diff   (- (.getTime target) (.getTime now))]
+(defn date->month-day [date]
+  (.toLocaleDateString date "en-US" #js {:month "short" :day "numeric"}))
+
+(defn date->iso [date]
+  (.toLocaleDateString date "en-CA"))
+
+(defn days-until [iso-date-str]
+  (when iso-date-str
+    (let [diff (- (.getTime (js/Date. iso-date-str)) (.getTime (js/Date.)))]
       (Math/ceil (/ diff 86400000)))))
 
 (defn date-display [date-str]

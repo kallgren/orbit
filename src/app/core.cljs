@@ -1,32 +1,45 @@
 (ns app.core
-  (:require [uix.core :refer [defui $ use-state]]
+  (:require [uix.core :refer [defui $ use-state use-effect]]
             [uix.dom]
+            [app.storage :as storage]
+            [app.schedule :refer [expand-schedule]]
             [app.utils :refer [parse-month-day days-until date-display due-text]]))
 
-;; ── Data ────────────────────────────────────────────────────────────────────
+;; ── Schedule ─────────────────────────────────────────────────────────────────
 
 (def category-order [:digital :household])
 
 (def category-labels {:digital "Digital" :household "Household"})
 
-(def tasks
-  ;; :upcoming? true = due in the future, hidden by default
-  [{:category :digital   :name "Annual report"          :freq "yearly"    :date "Jan 1"  :deadline "Jun 15"}
-   {:category :digital   :name "Tax review"             :freq "quarterly" :date "Mar 15" :deadline "Jun 19"}
-   {:category :digital   :name "Bookkeeping"            :freq "monthly"   :date "Jun 12"}
-   {:category :digital   :name "Finance review"         :freq "6 months"  :date "Jun 11" :deadline "Jun 13"}
-   {:category :digital   :name "Bookkeeping"            :freq "monthly"   :date "Jun 14" :upcoming? true}
-   {:category :digital   :name "Tax review"             :freq "quarterly" :date "Sep 15" :upcoming? true}
-   {:category :household :name "Wash shower curtain"     :freq "6 months"  :date "Jan 1"}
-   {:category :household :name "Vacuum sofa"             :freq "6 months"  :date "Jan 1"}
-   {:category :household :name "Clean range hood filter" :freq "quarterly" :date "Mar 6"}
-   {:category :household :name "Wipe down fridge"        :freq "quarterly" :date "Mar 20"}
-   {:category :household :name "Wash windows"            :freq "6 months"  :date "Mar 20"}
-   {:category :household :name "Clean dishwasher"        :freq "bimonthly" :date "May 1"}
-   {:category :household :name "Deep clean kitchen"      :freq "bimonthly" :date "May 1"}
-   {:category :household :name "Clean washing machine"   :freq "monthly"   :date "Jun 1"}
-   {:category :household :name "Clean washing machine"   :freq "monthly"   :date "Jun 17" :upcoming? true}
-   {:category :household :name "Clean range hood filter" :freq "quarterly" :date "Sep 6"  :upcoming? true}])
+(def placeholder-schedule
+  {:digital
+   {"monthly"   [{:name "Bookkeeping"    :anchor "Jan 1"}]
+    "quarterly" [{:name "Tax review"     :anchor "May 12" :before 30}]
+    "6 months"  [{:name "Finance review" :anchor "Jun 15" :before 14}]
+    "yearly"    [{:name "Annual report"  :anchor "Jul 1"  :before 30}]}
+   :household
+   {"monthly"   [{:name "Clean washing machine"    :anchor "Jun 1"}]
+    "2 months"  [{:name "Clean dishwasher"          :anchor "May 1"}
+                 {:name "Deep clean kitchen"        :anchor "May 1"}]
+    "quarterly" [{:name "Clean range hood filter"   :anchor "Mar 6"}
+                 {:name "Wipe down fridge"           :anchor "Mar 20"}]
+    "6 months"  [{:name "Wash shower curtain"       :anchor "Jan 1"}
+                 {:name "Vacuum sofa"               :anchor "Jan 1"}
+                 {:name "Clean lamps & vents"       :anchor "Jan 1"}
+                 {:name "Wash windows"              :anchor "Mar 20"}
+                 {:name "Clean bathroom cabinet"    :anchor "Jan 1"}]
+    "yearly"    [{:name "Clean shower drain"        :anchor "Jan 1"}
+                 {:name "Test circuit breaker"      :anchor "Jan 1"}
+                 {:name "Descale bathroom"          :anchor "Jan 1"}
+                 {:name "Wash stains on walls"      :anchor "Jan 1"}
+                 {:name "Clean drain traps"         :anchor "Jan 1"}
+                 {:name "Wash pillows & duvets"     :anchor "Jan 1"}
+                 {:name "Replace humidifier filter" :anchor "Jan 1"}]}})
+
+(def all-tasks
+  (let [year  (.getFullYear (js/Date.))
+        sched (or (storage/read-schedule) placeholder-schedule)]
+    (expand-schedule sched year)))
 
 ;; ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,12 +47,13 @@
   (let [year   (.getFullYear (js/Date.))
         sorted (sort-by #(parse-month-day (:date %) year) tasks)]
     {:current  (cond->> (remove :upcoming? sorted)
-                 (not show-completed?) (remove #(contains? done (:name %))))
-     :upcoming (filter :upcoming? sorted)}))
+                 (not show-completed?) (remove #(contains? done (:key %))))
+     :upcoming (cond->> (filter :upcoming? sorted)
+                 (not show-completed?) (remove #(contains? done (:key %))))}))
 
-(defn deadline-label [date-str]
-  (when-let [d (days-until date-str)]
-    (when (<= d 7)
+(defn deadline-label [iso-date-str]
+  (when-let [d (days-until iso-date-str)]
+    (when (<= 0 d 7)
       (due-text d))))
 
 ;; ── Components ───────────────────────────────────────────────────────────────
@@ -59,11 +73,11 @@
           ($ :path {:d "M2 5l2.5 2.5 3.5-4"})))))
 
 (defui task-row [{:keys [task done? on-toggle]}]
-  (let [{:keys [name freq date deadline]} task
-        due          (when-not done? (deadline-label deadline))
+  (let [{:keys [name freq date deadline key]} task
+        due                (when-not done? (deadline-label deadline))
         {:keys [rel full]} (date-display date)]
     ($ :button
-       {:on-click #(on-toggle name)
+       {:on-click #(on-toggle key)
         :class (str "group flex w-full items-center gap-3 px-4 py-2.5 rounded-lg "
                     "cursor-pointer select-none touch-manipulation text-left "
                     (if due
@@ -90,9 +104,9 @@
 (defui task-list [{:keys [tasks done on-toggle class]}]
   ($ :div {:class (str "flex flex-col" (when class (str " " class)))}
      (for [t tasks]
-       ($ task-row {:key (str (:name t) (:date t))
-                    :task t
-                    :done? (contains? done (:name t))
+       ($ task-row {:key       (:key t)
+                    :task      t
+                    :done?     (contains? done (:key t))
                     :on-toggle on-toggle}))))
 
 (defui upcoming-divider [{:keys [on-click]}]
@@ -132,9 +146,9 @@
         {:keys [current upcoming]} (partition-tasks cat-tasks done show-completed?)]
     ($ :div {:class "group/card relative pb-3"}
        ($ :div {:class "rounded-2xl border-2 border-edge bg-surface p-2"}
-          ($ card-header {:label label
+          ($ card-header {:label           label
                           :show-completed? show-completed?
-                          :on-toggle set-completed!})
+                          :on-toggle       set-completed!})
           (if (empty? current)
             ($ :p {:class "py-4 text-center text-[15px] font-medium italic text-muted"}
                "All clear!")
@@ -147,7 +161,7 @@
        (when (and (seq upcoming) (not show-upcoming?))
          ($ upcoming-tab {:on-click #(set-upcoming! not)})))))
 
-;; ── Header ──────────────────────────────────────────────────────────────────
+;; ── Header ───────────────────────────────────────────────────────────────────
 
 (defn today-parts []
   (let [d (js/Date.)]
@@ -162,23 +176,26 @@
        ($ :div {:class "text-[19px] font-medium tracking-wide text-muted"}
           (str wd " · " md)))))
 
-;; ── App ─────────────────────────────────────────────────────────────────────
+;; ── App ──────────────────────────────────────────────────────────────────────
 
 (defui app []
-  (let [[done set-done!] (use-state #{})
-        toggle (fn [name]
-                 (set-done! #(if (contains? % name) (disj % name) (conj % name))))
-        by-category (group-by :category tasks)]
+  (let [[done set-done!] (use-state #(or (storage/read-done) #{}))
+        toggle      (fn [k]
+                      (set-done! #(if (contains? % k) (disj % k) (conj % k))))
+        by-category (group-by :category all-tasks)]
+    (use-effect
+     (fn [] (storage/write-done! done))
+     [done])
     ($ :div {:class "px-7 pt-12 pb-16 mx-auto w-full max-w-2xl"}
        ($ screen-header)
        ($ :div {:class "flex flex-col gap-4"}
           (for [cat category-order
                 :let [rows (by-category cat)]
                 :when (seq rows)]
-            ($ category-card {:key (str cat)
-                              :label (category-labels cat)
+            ($ category-card {:key       (str cat)
+                              :label     (category-labels cat)
                               :cat-tasks rows
-                              :done done
+                              :done      done
                               :on-toggle toggle}))))))
 
 (defonce root
