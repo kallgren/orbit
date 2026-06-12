@@ -51,6 +51,19 @@
      :upcoming (cond->> (filter :upcoming? sorted)
                  (not show-completed?) (remove #(contains? done (:key %))))}))
 
+;; Key format is "task-name:YYYY-MM-DD" — ISO date is always the last 10 chars.
+(defn- key->parts [k]
+  (let [sep (- (count k) 11)]
+    {:name (subs k 0 sep) :date (subs k (inc sep))}))
+
+(defn- cascade-done [done k]
+  (let [{task-name :name task-date :date} (key->parts k)
+        to-close (->> all-tasks
+                      (filter #(let [{n :name d :date} (key->parts (:key %))]
+                                 (and (= n task-name) (<= (compare d task-date) 0))))
+                      (map :key))]
+    (into done to-close)))
+
 (defn deadline-label [iso-date-str]
   (when-let [d (days-until iso-date-str)]
     (when (<= 0 d 7)
@@ -181,7 +194,7 @@
 (defui app []
   (let [[done set-done!] (use-state #(or (storage/read-done) #{}))
         toggle      (fn [k]
-                      (set-done! #(if (contains? % k) (disj % k) (conj % k))))
+                      (set-done! #(if (contains? % k) (disj % k) (cascade-done % k))))
         by-category (group-by :category all-tasks)]
     (use-effect
      (fn [] (storage/write-done! done))
